@@ -10,6 +10,7 @@ from ripser import ripser
 from ripser import Rips
 from datetime import datetime
 from scipy.spatial import distance_matrix
+from tqdm import tqdm
 
 # Converts longitude or latitude values to meters
 def to_meters(longs_or_lats):
@@ -38,7 +39,7 @@ df = df[lat_long_mask]
 
 # Filter the data on daytime traffic
 df['Date_Time'] = pd.to_datetime(df['Date_Time'])
-daytime_mask = (df['Date_Time'].dt.hour >= 7) & (df['Date_Time'].dt.hour < 8) # from 07.00 to 08.00
+daytime_mask = (df['Date_Time'].dt.hour >= 9) & (df['Date_Time'].dt.hour < 17) # from 09.00 to 17.00
 df = df[daytime_mask]
 
 # Filter the data on car traffic
@@ -49,29 +50,21 @@ df = df[car_mask]
 df['Long_meters'] = to_meters(df['Longitude'].values)
 df['Lat_meters'] = to_meters(df['Latitude'].values)
 
+df_new = pd.DataFrame(columns=['Long_meters', 'Lat_meters', 'Altitude', 'Longitude', 'Latitude'])
+
+
+# Filter the data on points that are close to each other
+for _, row in tqdm(df.iterrows(), total=df.shape[0]):
+    for _, new_row in df_new.iterrows():
+        if abs(new_row['Long_meters'] - row['Long_meters']) < 50 and abs(new_row['Lat_meters'] - row['Lat_meters']) < 50:
+            break
+    else:
+        df_new.loc[len(df_new)] = [row['Long_meters'], row['Lat_meters'], 0, row['Longitude'], row['Latitude']]
+
+df = df_new
+print(df.head(100))
+
 # Visualize the filtered points
 x, y = proj(df['Longitude'].tolist(), df['Latitude'].tolist())
 p = np.c_[x, y, 0.3048 * df['Altitude']] # convert alt to meters
 v = pptk.viewer(p)
-
-
-
-
-
-
-
-
-
-
-
-
-
-# # Construct the point cloud
-# point_cloud = np.column_stack((x_coords, y_coords))
-#
-# # Compute the persistence diagram
-# diagrams = ripser(point_cloud)['dgms']
-#
-# # Print the persistence diagrams
-# for diagram in diagrams:
-#     print(diagram)
