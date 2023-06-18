@@ -11,12 +11,13 @@ from ripser import Rips
 from datetime import datetime
 from scipy.spatial import distance_matrix
 from tqdm import tqdm
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
+import threading
 
 # Converts longitude or latitude values to meters
 def to_meters(longs_or_lats):
     return longs_or_lats * 111139.0
-
 
 # Define the projection map
 proj = pyproj.Proj(proj='utm', zone=50, ellps='WGS84')
@@ -29,8 +30,6 @@ labels_cat = pd.Categorical(df.Label)
 df['Encoding'] = labels_cat.codes
 
 # Create dictionary with (key=label, value=encoding)
-# {'taxi': 7, 'walk': 9, 'bus': 3, 'train': 8, 'car': 4, 'airplane': 0,
-# 'subway': 6, 'bike': 1, 'run': 5, 'boat': 2}
 labels = df['Label'].drop_duplicates()
 encodings = df['Encoding'].drop_duplicates()
 label_map = dict(zip(labels, encodings))
@@ -55,35 +54,48 @@ df['Lat_meters'] = to_meters(df['Latitude'].values)
 df_new = pd.DataFrame(columns=['Long_meters', 'Lat_meters', 'Altitude', 'Longitude', 'Latitude'])
 
 
+# Check if a point is eligible to be added to df_new
+def is_eligible(row, queue):
+    for new_row in queue:
+        if np.abs(new_row[0] - row['Long_meters']) < 50 and np.abs(new_row[1] - row['Lat_meters']) < 50:
+            return False
+    return True
+
+
+def process_row(row_tuple, queue, lock):
+    _, row = row_tuple
+    with lock:
+        if is_eligible(row, queue.queue):
+            result = [row['Long_meters'], row['Lat_meters'], row['Altitude'], row['Longitude'], row['Latitude']]
+            queue.put(result)
+            return result
+    return None
+
+
 # Filter the data on points that are close to each other
-c = 0
-# done = False
-for _, row in tqdm(df.iterrows(), total=df.shape[0]):
-    # if done:
-    #     break
+df_new_queue = Queue()
+eligibility_lock = threading.Lock()
+with ThreadPoolExecutor() as executor:
+    futures = [executor.submit(process_row, row_tuple, df_new_queue, eligibility_lock) for row_tuple in df.iterrows()]
+    results = []
+    for future in tqdm(as_completed(futures), total=len(futures)):
+        result = future.result()
+        if result is not None:
+            results.append(result)
 
-    # Denotes that a point does not collide with any of the already existing points within 50 meters
-    eligible = True
-    for _, new_row in df_new.iterrows():
-        if np.abs(new_row['Long_meters'] - row['Long_meters']) < 50 and np.abs(new_row['Lat_meters'] - row['Lat_meters']) < 50:
-            eligible = False
-            break
+for result in tqdm(results, total=len(results)):
+    if result is not None:
+        df_new.loc[len(df_new)] = result
 
-    # Check if data point does not clash with any of the other present data points
-    if eligible:
-        df_new.loc[len(df_new)] = [row['Long_meters'], row['Lat_meters'], row['Altitude'], row['Longitude'], row['Latitude']]
-        # c += 1
-
-        # if c % 100 == 0:
-        #     print(c)
-        # if c >= 500:
-        #     done = True
+# Visualize the filtered points
+x, y = proj(df['Longitude'].tolist(), df['Latitude'].tolist())
+p = np.c_[x, y, 0.3048 * df['Altitude']]  # convert alt to meters
+v = pptk.viewer(p)
 
 df = df_new
-df.to_csv('filtered_trajectories.csv', index=False)
+df.to_csv('filtered_taxi_trajectories.csv', index=False)
 
 print(df.head(100))
-
 
 # Visualize the filtered points
 x, y = proj(df['Longitude'].tolist(), df['Latitude'].tolist())

@@ -1,1 +1,7 @@
 dataset_raw_full.csv
+filtered_bus_trajectories.csv
+filtered_car_trajectories.csv
+filtered_subway_trajectories.csv
+filtered_taxi_trajectories.csv
+filtered_train_trajectories.csv
+filtered_walk_trajectories.csv
